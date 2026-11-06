@@ -1,0 +1,75 @@
+name: Build Windows Release (Blackwell sm_120)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - ci/windows-build
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+
+jobs:
+  build-windows:
+    name: Build Windows x64 CUDA 13 (sm_120)
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    env:
+      CUDA_VERSION: "13.0.2"
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["nvcc", "cudart", "crt", "nvvm", "cublas_dev", "nvrtc_dev", "visual_studio_integration"]'
+          use-github-cache: true
+
+      - name: Setup MSVC C++ Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWERROR=OFF \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_CUDA_ARCHITECTURES=120
+
+      - name: Compile Basalt Engine
+        shell: bash
+        run: |
+          cmake --build build -j --target basalt basalt-vision basalt-bench basalt-probe
+
+      - name: Package Distributable Binaries
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp -v bin/*.exe dist/
+          # Include CUDA runtime DLLs if available
+          if [ -d "$CUDA_PATH/bin" ]; then
+            cp -n -v "$CUDA_PATH/bin"/cublas*.dll dist/ 2>/dev/null || true
+            cp -n -v "$CUDA_PATH/bin"/cudart*.dll dist/ 2>/dev/null || true
+          fi
+          echo "=== Packed Dist Files ==="
+          ls -la dist/
+
+      - name: Upload Distributable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: basalt-windows-x64-cuda13
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
